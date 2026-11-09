@@ -22,46 +22,51 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    FSInputFile
+    FSInputFile,
+    InputMediaVideo,
+    InputMediaPhoto
 )
 
 # ==================== 1. ОСНОВНЫЕ НАСТРОЙКИ И ПУТИ ====================
-# Токен бота из переменных окружения Render
+# Токен бота берется из переменных окружения Render (Environment Variables)
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Твой личный Telegram ID администратора
 ADMIN_ID = 6051384649
 
-# Папки и файлы для хранения данных
+# Максимальное количество файлов из одной карусели за раз
+MAX_CAROUSEL_ITEMS = 10
+
+# Папка для временного хранения скачиваемых файлов
 DOWNLOAD_DIR = Path("/tmp/tg_video_bot")
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+# Файлы конфигурации и авторизации (cookies)
 CONFIG_FILE = Path("bot_config.json")
-# Проверяем cookies сначала в папке загрузки (если загрузили через бота), затем в корне проекта
 COOKIES_TMP_PATH = DOWNLOAD_DIR / "cookies.txt"
 COOKIES_ROOT_PATH = Path("cookies.txt")
 
-# Пул из 4 потоков для быстрого параллельного скачивания видео
+# Пул потоков для одновременного скачивания запросов от разных пользователей
 download_executor = ThreadPoolExecutor(max_workers=4)
 
 # Настройки по умолчанию
 default_config = {
     "channels": ["@raqami_77"],
     "welcome_text": (
-        "👋 Привет! Я скоростной бот для скачивания видео.\n\n"
+        "👋 Привет! Я скоростной бот для скачивания видео и каруселей.\n\n"
         "🔗 Отправь мне ссылку из:\n"
         "• YouTube (360p / 720p и MP3)\n"
-        "• Instagram (Reels, посты и Stories)\n"
+        "• Instagram (Reels, посты-карусели и Stories)\n"
         "• TikTok (без водяных знаков)\n"
         "• Pinterest"
     ),
     "custom_buttons": [],
-    "users": [],           # Список ID всех пользователей для статистики и рассылки
-    "downloads_count": 0   # Счетчик успешных скачиваний
+    "users": [],
+    "downloads_count": 0
 }
 
 def load_config():
-    """Загружает настройки и базу пользователей из файла"""
+    """Загружает настройки бота и список пользователей из файла"""
     if CONFIG_FILE.exists():
         try:
             with open(CONFIG_FILE, "r", encoding="utf-8") as f:
@@ -74,7 +79,7 @@ def load_config():
     return default_config.copy()
 
 def save_config():
-    """Сохраняет текущие настройки в файл"""
+    """Сохраняет настройки бота в файл"""
     try:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump(bot_config, f, ensure_ascii=False, indent=2)
@@ -83,13 +88,13 @@ def save_config():
 
 bot_config = load_config()
 
-# Оперативная память для языков, коротких ссылок и мгновенного кэша файлов
+# Словари в оперативной памяти для языков, коротких кодов ссылок и кэша медиа
 user_lang = {}
 url_storage = {}
-file_cache = {}  # Кэш вида {"url|mode": {"file_id": "...", "title": "...", "type": "video/audio"}}
+file_cache = {}  # Хранит список медиафайлов для мгновенной повторной отправки
 
 def get_active_cookies_path():
-    """Проверяет, есть ли загруженный файл cookies.txt для Instagram Stories и YouTube"""
+    """Возвращает путь к файлу cookies.txt, если он загружен"""
     if COOKIES_TMP_PATH.exists() and COOKIES_TMP_PATH.stat().st_size > 0:
         return str(COOKIES_TMP_PATH)
     if COOKIES_ROOT_PATH.exists() and COOKIES_ROOT_PATH.stat().st_size > 0:
@@ -105,8 +110,8 @@ translations = {
         "check_btn": "✅ Ман обуна шудам",
         "not_sub": "❌ Шумо ҳанӯз ба ҳамаи каналҳо обуна нашудаед!",
         "yt_choice": "🎥 Сифати видео ё мусиқиро интихоб кунед:",
-        "downloading": "⚡ Боргирии тез рафта истодааст...",
-        "error": "❌ Боргирӣ нашуд. Шояд видео пӯшида аст, ҳаҷмаш аз 50 МБ зиёд аст ё барои Stories файли cookies лозим аст."
+        "downloading": "⚡ Боргирии тез рафта истодааст (ҳамаи файлҳо)...",
+        "error": "❌ Боргирӣ нашуд. Шояд видео пӯшида аст, ҳаҷмаш аз 50 МБ зиёд аст ё барои Stories/карусел файли cookies лозим аст."
     },
     "uz": {
         "name": "🇺🇿 O'zbekcha",
@@ -115,7 +120,7 @@ translations = {
         "check_btn": "✅ Obuna bo'ldim",
         "not_sub": "❌ Siz hali barcha kanallarga obuna bo'lmadingiz!",
         "yt_choice": "🎥 Video sifatini yoki musiqani tanlang:",
-        "downloading": "⚡ Tezkor yuklab olinmoqda...",
+        "downloading": "⚡ Tezkor yuklab olinmoqda (barcha fayllar)...",
         "error": "❌ Yuklab bo'lmadi. Video yopiq bo'lishi yoki 50 MB dan katta bo'lishi mumkin."
     },
     "kk": {
@@ -125,7 +130,7 @@ translations = {
         "check_btn": "✅ Мен жазылдым",
         "not_sub": "❌ Сіз әлі барлық арналарға жазылған жоқсыз!",
         "yt_choice": "🎥 Бейне сапасын немесе музыканы таңдаңыз:",
-        "downloading": "⚡ Жылдам жүктелуде...",
+        "downloading": "⚡ Жылдам жүктелуде (барлық файлдар)...",
         "error": "❌ Жүктелмеді. Сілтемені тексеріңіз немесе файл 50 МБ-тан үлкен."
     },
     "ru": {
@@ -135,8 +140,8 @@ translations = {
         "check_btn": "✅ Я подписался",
         "not_sub": "❌ Вы еще не подписались на все каналы!",
         "yt_choice": "🎥 Выберите качество видео или аудио:",
-        "downloading": "⚡ Быстрое скачивание, подождите пару секунд...",
-        "error": "❌ Не удалось скачать. Проверьте ссылку (для Instagram Stories нужен загруженный в админке cookies.txt, а размер файла не должен превышать 50 МБ)."
+        "downloading": "⚡ Быстрое скачивание (загружаю все файлы из поста)...",
+        "error": "❌ Не удалось скачать. Проверьте ссылку (для Instagram Stories и закрытых каруселей нужен загруженный в админке cookies.txt, а размер файла не должен превышать 50 МБ)."
     }
 }
 
@@ -165,13 +170,13 @@ def run_web_server():
 
 # ==================== 5. ПРОВЕРКА ПОДПИСКИ И КЛАВИАТУРЫ ====================
 def register_user(user_id: int):
-    """Сохраняет пользователя в базу при первом входе"""
+    """Добавляет нового пользователя в список для статистики и рассылки"""
     if user_id not in bot_config["users"]:
         bot_config["users"].append(user_id)
         save_config()
 
 async def check_subscription(bot: Bot, user_id: int) -> bool:
-    """Проверяет подписку на обязательные каналы"""
+    """Проверяет подписку пользователя на все обязательные каналы"""
     if user_id == ADMIN_ID or not bot_config["channels"]:
         return True
     for ch in bot_config["channels"]:
@@ -251,12 +256,12 @@ async def change_lang_callback(callback: CallbackQuery):
         reply_markup=get_language_keyboard()
     )
 
-# ==================== 7. РАСШИРЕННАЯ АДМИН-ПАНЕЛЬ ====================
+# ==================== 7. АДМИН-ПАНЕЛЬ ====================
 def get_admin_keyboard():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📊 Статистика", callback_data="adm_stats"),
          InlineKeyboardButton(text="📨 Рассылка всем", callback_data="adm_broadcast")],
-        [InlineKeyboardButton(text="🍪 Загрузить cookies.txt (Stories)", callback_data="adm_cookies")],
+        [InlineKeyboardButton(text="🍪 Загрузить cookies.txt (Stories/Карусели)", callback_data="adm_cookies")],
         [InlineKeyboardButton(text="➕ Добавить канал", callback_data="adm_add_ch"),
          InlineKeyboardButton(text="➖ Удалить канал", callback_data="adm_del_ch")],
         [InlineKeyboardButton(text="🔓 Отключить обязат. подписку", callback_data="adm_clear_ch")],
@@ -273,13 +278,13 @@ async def admin_panel_callback(callback: CallbackQuery, state: FSMContext):
     await state.clear()
 
     channels_list = ", ".join(bot_config["channels"]) if bot_config["channels"] else "Отключена (свободный вход)"
-    cookies_status = "✅ Подключен (Stories работают)" if get_active_cookies_path() else "❌ Не загружен"
+    cookies_status = "✅ Подключен" if get_active_cookies_path() else "❌ Не загружен"
 
     text = (
         "⚙️ <b>Панель управления ботом</b>\n\n"
         f"👥 <b>Пользователей в боте:</b> {len(bot_config['users'])}\n"
-        f"📥 <b>Скачано файлов:</b> {bot_config['downloads_count']}\n"
-        f"⚡ <b>Ссылок в быстром кэше:</b> {len(file_cache)}\n"
+        f"📥 <b>Скачано постов/файлов:</b> {bot_config['downloads_count']}\n"
+        f"⚡ <b>Постов в быстром кэше:</b> {len(file_cache)}\n"
         f"📢 <b>Обязательная подписка:</b> {channels_list}\n"
         f"🍪 <b>Файл Cookies (Instagram/YT):</b> {cookies_status}\n"
         f"🔘 <b>Доп. кнопок:</b> {len(bot_config.get('custom_buttons', []))}\n\n"
@@ -309,16 +314,15 @@ async def admin_actions_callback(callback: CallbackQuery, state: FSMContext):
     elif action == "adm_cookies":
         await state.set_state(AdminStates.waiting_for_cookies)
         await callback.message.edit_text(
-            "🍪 <b>Загрузка cookies.txt для Instagram Stories и YouTube</b>\n\n"
+            "🍪 <b>Загрузка cookies.txt для Instagram Stories, каруселей и YouTube</b>\n\n"
             "Отправьте мне файл <code>cookies.txt</code> документом прямо в этот чат.\n"
-            "Как только я его получу, бот сможет скачивать Instagram Stories и закрытые видео!\n\n"
             "Для отмены нажмите /start"
         )
     elif action == "adm_add_ch":
         await state.set_state(AdminStates.waiting_for_new_channel)
         await callback.message.edit_text(
             "📢 Отправьте юзернейм канала через @ (например: <code>@raqami_77</code>).\n"
-            "⚠️ Обязательно добавьте бота в администраторы этого канала!"
+            "⚠️ Добавьте бота в администраторы этого канала!"
         )
     elif action == "adm_del_ch":
         if not bot_config["channels"]:
@@ -354,7 +358,7 @@ async def admin_actions_callback(callback: CallbackQuery, state: FSMContext):
                     f.unlink()
                 except Exception:
                     pass
-        await callback.answer("🧹 Память и кэш успешно очищены!", show_alert=True)
+        await callback.answer("🧹 Память и кэш очищены!", show_alert=True)
         await admin_panel_callback(callback, state)
     elif action == "adm_back":
         await state.clear()
@@ -363,23 +367,22 @@ async def admin_actions_callback(callback: CallbackQuery, state: FSMContext):
             reply_markup=get_main_menu_keyboard(callback.from_user.id)
         )
 
-# Обработчики ввода данных от Админа
 async def admin_cookies_msg(message: Message, state: FSMContext, bot: Bot):
     if message.document:
         file_info = await bot.get_file(message.document.file_id)
         await bot.download_file(file_info.file_path, destination=COOKIES_TMP_PATH)
         await state.clear()
         await message.answer(
-            "✅ Файл <code>cookies.txt</code> успешно сохранен! Теперь Instagram Stories и YouTube работают с авторизацией.",
+            "✅ Файл <code>cookies.txt</code> сохранен! Теперь Stories и закрытые карусели работают.",
             reply_markup=get_admin_keyboard()
         )
     elif message.text and "Netscape" in message.text:
         with open(COOKIES_TMP_PATH, "w", encoding="utf-8") as f:
             f.write(message.text)
         await state.clear()
-        await message.answer("✅ Текст cookies успешно сохранен!", reply_markup=get_admin_keyboard())
+        await message.answer("✅ Текст cookies сохранен!", reply_markup=get_admin_keyboard())
     else:
-        await message.answer("❌ Пожалуйста, отправьте именно файл <code>cookies.txt</code> документом (или нажмите /start для отмены).")
+        await message.answer("❌ Отправьте файл <code>cookies.txt</code> документом (или нажмите /start для отмены).")
 
 async def admin_broadcast_msg(message: Message, state: FSMContext):
     await state.clear()
@@ -390,11 +393,11 @@ async def admin_broadcast_msg(message: Message, state: FSMContext):
         try:
             await message.copy_to(chat_id=uid)
             sent += 1
-            await asyncio.sleep(0.05)  # Защита от спам-блока Telegram
+            await asyncio.sleep(0.05)
         except Exception:
             continue
     await status.edit_text(
-        f"✅ Рассылка завершена!\nУспешно доставлено: <b>{sent}</b> из <b>{len(users)}</b>.",
+        f"✅ Рассылка завершена!\nДоставлено: <b>{sent}</b> из <b>{len(users)}</b>.",
         reply_markup=get_admin_keyboard()
     )
 
@@ -433,7 +436,7 @@ async def admin_add_button_msg(message: Message, state: FSMContext):
     await state.clear()
     await message.answer("✅ Кнопка добавлена!", reply_markup=get_admin_keyboard())
 
-# ==================== 8. СКОРОСТНОЕ СКАЧИВАНИЕ ВИДЕО И STORIES ====================
+# ==================== 8. СКАЧИВАНИЕ ВИДЕО, STORIES И ВСЕЙ КАРУСЕЛИ ====================
 async def url_handler(message: Message, bot: Bot):
     user_id = message.from_user.id
     register_user(user_id)
@@ -461,7 +464,7 @@ async def url_handler(message: Message, bot: Bot):
         await message.answer(t["yt_choice"], reply_markup=keyboard)
     elif any(d in url for d in ["instagram.com", "tiktok.com", "pin.it", "pinterest.com"]):
         status_msg = await message.answer(t["downloading"])
-        await download_and_send_media(message, status_msg, url, mode="fast_video", lang=lang)
+        await download_and_send_media(message, status_msg, url, mode="carousel_media", lang=lang)
     else:
         await message.answer("⚠️ Пожалуйста, отправьте ссылку на YouTube, Instagram, TikTok или Pinterest.")
 
@@ -479,18 +482,38 @@ async def youtube_callback_handler(callback: CallbackQuery):
     await callback.message.edit_text(t["downloading"])
     await download_and_send_media(callback.message, callback.message, url, mode=quality, lang=lang)
 
-async def download_and_send_media(message: Message, status_msg: Message, url: str, mode: str = "fast_video", lang: str = "ru"):
+async def send_cached_items(message: Message, cached_list: list, caption: str):
+    """Мгновенно отправляет одиночный файл или всю карусель из кэша"""
+    if len(cached_list) == 1:
+        item = cached_list[0]
+        if item["type"] == "audio":
+            await message.answer_audio(audio=item["file_id"], caption=caption)
+        elif item["type"] == "photo":
+            await message.answer_photo(photo=item["file_id"], caption=caption)
+        else:
+            await message.answer_video(video=item["file_id"], caption=caption)
+    else:
+        # Отправляем карусель альбомами до 10 штук
+        for i in range(0, len(cached_list), 10):
+            chunk = cached_list[i:i + 10]
+            media_group = []
+            for idx, item in enumerate(chunk):
+                cap = caption if (i == 0 and idx == 0) else None
+                if item["type"] == "photo":
+                    media_group.append(InputMediaPhoto(media=item["file_id"], caption=cap))
+                else:
+                    media_group.append(InputMediaVideo(media=item["file_id"], caption=cap))
+            await message.answer_media_group(media=media_group)
+
+async def download_and_send_media(message: Message, status_msg: Message, url: str, mode: str = "carousel_media", lang: str = "ru"):
     t = translations[lang]
     cache_key = f"{url}|{mode}"
 
-    # 1. ПРОВЕРКА МГНОВЕННОГО КЭША (отправка за 0.1 сек без скачивания)
+    # 1. ПРОВЕРКА КЭША (если эту ссылку или карусель уже скачивали ранее)
     if cache_key in file_cache:
-        cached = file_cache[cache_key]
+        cached_data = file_cache[cache_key]
         try:
-            if cached["type"] == "audio":
-                await message.answer_audio(audio=cached["file_id"], caption=cached["caption"])
-            else:
-                await message.answer_video(video=cached["file_id"], caption=cached["caption"])
+            await send_cached_items(message, cached_data["items"], cached_data["caption"])
             await status_msg.delete()
             return
         except Exception:
@@ -498,18 +521,22 @@ async def download_and_send_media(message: Message, status_msg: Message, url: st
 
     loop = asyncio.get_running_loop()
     unique_prefix = str(uuid.uuid4())[:8]
+    is_youtube = "youtube.com" in url or "youtu.be" in url
 
-    # 2. НАСТРОЙКИ МАКСИМАЛЬНОЙ СКОРОСТИ YT-DLP
+    # 2. НАСТРОЙКА ЗАГРУЗЧИКА (с поддержкой всех элементов карусели)
     ydl_opts = {
-        'outtmpl': str(DOWNLOAD_DIR / f'{unique_prefix}_%(id)s.%(ext)s'),
-        'noplaylist': True,
+        # autonumber сохраняет точный порядок слайдов карусели (00001, 00002...)
+        'outtmpl': str(DOWNLOAD_DIR / f'{unique_prefix}_%(autonumber)s_%(id)s.%(ext)s'),
+        'noplaylist': is_youtube,            # Для YouTube берем 1 видео, для соцсетей — всю карусель!
+        'playlistend': MAX_CAROUSEL_ITEMS,   # Скачиваем до 10 элементов из одной карусели
+        'ignoreerrors': True,                # Если 1 слайд поврежден, остальные все равно скачаются
         'quiet': True,
         'no_warnings': True,
         'geo_bypass': True,
         'nocheckcertificate': True,
-        'concurrent_fragment_downloads': 8,  # Качаем в 8 параллельных потоков
+        'concurrent_fragment_downloads': 8,
         'buffersize': 1024 * 64,
-        'http_chunk_size': 10485760,         # Блоки по 10 МБ против замедления YouTube
+        'http_chunk_size': 10485760,
         'socket_timeout': 15,
         'retries': 3,
         'http_headers': {
@@ -517,19 +544,17 @@ async def download_and_send_media(message: Message, status_msg: Message, url: st
         }
     }
 
-    # Если загружен cookies.txt — подключаем его (открывает доступ к Instagram Stories и YouTube)
     cookies_file = get_active_cookies_path()
     if cookies_file:
         ydl_opts['cookiefile'] = cookies_file
 
-    # Выбираем готовые mp4-форматы, чтобы не тратить время процессора на склейку
     if mode == "mp3":
         ydl_opts.update({
             'format': 'bestaudio[filesize<50M]/bestaudio/best',
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
-                'preferredquality': '128',  # 128 kbps конвертируется в 2 раза быстрее
+                'preferredquality': '128',
             }],
         })
     elif mode == "360":
@@ -537,37 +562,98 @@ async def download_and_send_media(message: Message, status_msg: Message, url: st
     elif mode == "720":
         ydl_opts['format'] = 'best[height<=720][ext=mp4][filesize<50M]/best[height<=720][ext=mp4]/best[ext=mp4]/best'
     else:
-        # Для Instagram (Reels + Stories), TikTok и Pinterest
+        # Для каруселей Instagram, TikTok и Pinterest разрешаем видео и изображения до 50 МБ
         ydl_opts['format'] = 'best[ext=mp4][filesize<50M]/best[ext=mp4]/best'
 
     def download():
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
-            # Если это сторис или карусель из нескольких элементов, берем первый/выбранный
-            if 'entries' in info and info['entries']:
-                info = info['entries'][0]
-            filename = ydl.prepare_filename(info)
-            if mode == "mp3":
-                filename = str(Path(filename).with_suffix('.mp3'))
-            return filename, info.get('title', 'Медиафайл')
+            title = "Медиафайл"
+            if isinstance(info, dict):
+                title = info.get('title') or info.get('description') or "Медиафайл"
 
-    file_path = None
+            # Собираем все скачанные файлы этого запроса в правильном порядке
+            downloaded_files = []
+            for f in sorted(DOWNLOAD_DIR.glob(f"{unique_prefix}_*")):
+                # Пропускаем временные недокачанные файлы
+                if f.suffix in [".part", ".ytdl"]:
+                    continue
+                if mode == "mp3" and f.suffix != ".mp3":
+                    continue
+                downloaded_files.append(str(f))
+
+            return downloaded_files, str(title)
+
+    downloaded_files = []
     try:
-        file_path, title = await loop.run_in_executor(download_executor, download)
+        downloaded_files, title = await loop.run_in_executor(download_executor, download)
 
-        if mode == "mp3":
-            caption = f"🎵 {title[:100]}"
-            sent_msg = await message.answer_audio(audio=FSInputFile(file_path), caption=caption)
-            if sent_msg.audio:
-                file_cache[cache_key] = {"file_id": sent_msg.audio.file_id, "caption": caption, "type": "audio"}
+        if not downloaded_files:
+            raise ValueError("Файлы не были загружены")
+
+        clean_title = title.replace("\n", " ").strip()[:100]
+        caption = f"🎵 {clean_title}" if mode == "mp3" else f"🎬 {clean_title}"
+        cached_items = []
+
+        # 3. ОТПРАВКА ОДИНОЧНОГО ФАЙЛА ИЛИ ВСЕЙ КАРУСЕЛИ
+        if len(downloaded_files) == 1:
+            file_path = downloaded_files[0]
+            ext = Path(file_path).suffix.lower()
+            if mode == "mp3":
+                sent = await message.answer_audio(audio=FSInputFile(file_path), caption=caption)
+                if sent.audio:
+                    cached_items.append({"file_id": sent.audio.file_id, "type": "audio"})
+            elif ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                sent = await message.answer_photo(photo=FSInputFile(file_path), caption=caption)
+                if sent.photo:
+                    cached_items.append({"file_id": sent.photo[-1].file_id, "type": "photo"})
+            else:
+                sent = await message.answer_video(video=FSInputFile(file_path), caption=caption, supports_streaming=True)
+                if sent.video:
+                    cached_items.append({"file_id": sent.video.file_id, "type": "video"})
         else:
-            caption = f"🎬 {title[:100]}"
-            sent_msg = await message.answer_video(video=FSInputFile(file_path), caption=caption, supports_streaming=True)
-            if sent_msg.video:
-                file_cache[cache_key] = {"file_id": sent_msg.video.file_id, "caption": caption, "type": "video"}
+            # Если скачалась карусель (несколько файлов) — отправляем альбомом по 10 штук
+            for i in range(0, len(downloaded_files), 10):
+                chunk = downloaded_files[i:i + 10]
+                if len(chunk) == 1:
+                    fp = chunk[0]
+                    ext = Path(fp).suffix.lower()
+                    if ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                        sent = await message.answer_photo(photo=FSInputFile(fp))
+                        if sent.photo:
+                            cached_items.append({"file_id": sent.photo[-1].file_id, "type": "photo"})
+                    else:
+                        sent = await message.answer_video(video=FSInputFile(fp), supports_streaming=True)
+                        if sent.video:
+                            cached_items.append({"file_id": sent.video.file_id, "type": "video"})
+                else:
+                    media_group = []
+                    for idx, fp in enumerate(chunk):
+                        ext = Path(fp).suffix.lower()
+                        item_caption = f"{caption} (Карусель: {len(downloaded_files)} шт.)" if (i == 0 and idx == 0) else None
+                        if ext in [".jpg", ".jpeg", ".png", ".webp"]:
+                            media_group.append(InputMediaPhoto(media=FSInputFile(fp), caption=item_caption))
+                        else:
+                            media_group.append(InputMediaVideo(media=FSInputFile(fp), caption=item_caption, supports_streaming=True))
+                    try:
+                        sent_group = await message.answer_media_group(media=media_group)
+                        for msg_item in sent_group:
+                            if msg_item.photo:
+                                cached_items.append({"file_id": msg_item.photo[-1].file_id, "type": "photo"})
+                            elif msg_item.video:
+                                cached_items.append({"file_id": msg_item.video.file_id, "type": "video"})
+                    except Exception as group_err:
+                        logging.warning(f"Отправка альбомом не удалась, отправляю по одному: {group_err}")
+                        for fp in chunk:
+                            sent = await message.answer_video(video=FSInputFile(fp), supports_streaming=True)
+                            if sent.video:
+                                cached_items.append({"file_id": sent.video.file_id, "type": "video"})
 
-        # Увеличиваем счетчик скачиваний в статистике
-        bot_config["downloads_count"] = bot_config.get("downloads_count", 0) + 1
+        # Сохраняем карусель в быстрый кэш
+        if cached_items:
+            file_cache[cache_key] = {"items": cached_items, "caption": caption}
+
+        bot_config["downloads_count"] = bot_config.get("downloads_count", 0) + len(downloaded_files)
         save_config()
 
         try:
@@ -579,9 +665,10 @@ async def download_and_send_media(message: Message, status_msg: Message, url: st
         logging.error(f"Ошибка скачивания ({url}): {e}")
         await message.answer(t["error"])
     finally:
-        if file_path and os.path.exists(file_path):
+        # 4. ОЧИСТКА ДИСКА: удаляем все скачанные файлы этой карусели с сервера
+        for f in DOWNLOAD_DIR.glob(f"{unique_prefix}_*"):
             try:
-                os.remove(file_path)
+                f.unlink()
             except Exception:
                 pass
 
@@ -618,7 +705,7 @@ async def main():
     dp.message.register(url_handler, F.text.startswith("http"))
 
     await bot.delete_webhook(drop_pending_updates=True)
-    logging.info("Скоростной бот успешно запущен!")
+    logging.info("Скоростной бот с поддержкой каруселей успешно запущен!")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
