@@ -3,12 +3,18 @@ import logging
 import os
 import sys
 
-from aiogram import Bot, Dispatcher
+from aiogram import Bot, Dispatcher, F
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.filters import CommandStart
+from aiogram.types import Message
 
-# Подключаем роутер из файла handlers.py, который лежит в корне проекта
-from handlers import router
+async def start_handler(message: Message):
+    """Обработчик команды /start"""
+    await message.answer(
+        "Привет! Я твой Telegram-бот для работы с видео. "
+        "Бот успешно запущен на Render и готов к работе! 🚀"
+    )
 
 async def main():
     # Получаем токен из переменных окружения Render
@@ -25,8 +31,8 @@ async def main():
     )
     dp = Dispatcher()
 
-    # Подключаем роутер
-    dp.include_router(router)
+    # Регистрируем обработчик команды /start прямо здесь
+    dp.message.register(start_handler, CommandStart())
 
     # Запуск поллинга
     await bot.delete_webhook(drop_pending_updates=True)
