@@ -2,12 +2,31 @@ import asyncio
 import logging
 import os
 import sys
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-from aiogram import Bot, Dispatcher, F
+from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.filters import CommandStart
 from aiogram.types import Message
+
+# Мини-веб-сервер для Render, чтобы он видел открытый порт
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is alive!")
+    
+    # Отключаем лишние логи запросов в консоли
+    def log_message(self, format, *args):
+        pass
+
+def run_web_server():
+    port = int(os.getenv("PORT", 10000))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    logging.info(f"Веб-сервер запущен на порту {port}")
+    server.serve_forever()
 
 async def start_handler(message: Message):
     """Обработчик команды /start"""
@@ -17,6 +36,10 @@ async def start_handler(message: Message):
     )
 
 async def main():
+    # Запускаем веб-сервер в отдельном потоке, чтобы Render не ругался на порт
+    server_thread = threading.Thread(target=run_web_server, daemon=True)
+    server_thread.start()
+
     # Получаем токен из переменных окружения Render
     bot_token = os.getenv("BOT_TOKEN")
     
@@ -31,7 +54,7 @@ async def main():
     )
     dp = Dispatcher()
 
-    # Регистрируем обработчик команды /start прямо здесь
+    # Регистрируем обработчик команды /start
     dp.message.register(start_handler, CommandStart())
 
     # Запуск поллинга
