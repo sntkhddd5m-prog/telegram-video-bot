@@ -1,0 +1,14 @@
+services:
+  video-bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: tg_video_downloader_bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PYTHONUNBUFFERED=1
+      - TEMP_DIR=/tmp/tg_video_bot
+    tmpfs:
+      - /tmp/tg_video_bot:size=512M,mode=1777
