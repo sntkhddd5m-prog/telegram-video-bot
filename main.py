@@ -4,7 +4,7 @@ import sys
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from config.settings import settings
+from config import settings
 from bot.middlewares import I18nMiddleware, RateLimitMiddleware
 from bot.handlers import main_router
 from bot.services import queue_manager, file_cleaner
