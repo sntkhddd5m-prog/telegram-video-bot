@@ -21,9 +21,9 @@ from aiogram.types import (
 
 # ==================== НАСТРОЙКИ БОТА ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 6051384649  # Твой реальный ID успешно добавлен!
+ADMIN_ID = 6051384649  # Твой ID администратора
 
-# Текст приветствия (можешь менять его прямо здесь в кавычках при желании!)
+# Текст приветствия (можешь менять его здесь!)
 WELCOME_TEXT_CUSTOM = (
     "👋 Привет! Я твой бот-скачивальщик.\n\n"
     "🔗 Отправь мне ссылку из:\n"
@@ -33,16 +33,14 @@ WELCOME_TEXT_CUSTOM = (
     "• Pinterest"
 )
 
-REQUIRED_CHANNEL = "@raqami77"  # Канал для проверки подписки
+REQUIRED_CHANNEL = "@raqami_77"  # Исправленный канал с подчеркиванием
 DOWNLOAD_DIR = Path("/tmp/tg_video_bot")
 DOWNLOAD_DIR.mkdir(parents=True, exist_ok=True)
 # ========================================================
 
-# Словари с переводами интерфейса (Таджикский, Узбекский, Казахский, Русский)
 translations = {
     "tg": {
         "name": "🇹🇯 Тоҷикӣ",
-        "choose_lang": "Лутфан забони худро интихоб кунед:",
         "sub_text": "Салом! Барои истифодаи бот лутфан ба канали мо обуна шавед:",
         "sub_btn": "📢 Обуна шудан",
         "check_btn": "✅ Ман обуна шудам",
@@ -56,7 +54,6 @@ translations = {
     },
     "uz": {
         "name": "🇺🇿 O'zbekcha",
-        "choose_lang": "Iltimos, tilingizni tanlang:",
         "sub_text": "Salom! Botdan foydalanish uchun kanalimizga obuna bo'ling:",
         "sub_btn": "📢 Obuna bo'lish",
         "check_btn": "✅ Obuna bo'ldim",
@@ -70,7 +67,6 @@ translations = {
     },
     "kk": {
         "name": "🇰🇿 Қазақша",
-        "choose_lang": "Тілді таңдаңыз:",
         "sub_text": "Сәлем! Ботты қолдану үшін арнамызға жазылыңыз:",
         "sub_btn": "📢 Жазылу",
         "check_btn": "✅ Мен жазылдым",
@@ -84,7 +80,6 @@ translations = {
     },
     "ru": {
         "name": "🇷🇺 Русский",
-        "choose_lang": "Пожалуйста, выберите язык:",
         "sub_text": "Привет! Для использования бота подпишись на наш канал:",
         "sub_btn": "📢 Подписаться",
         "check_btn": "✅ Я подписался",
@@ -98,9 +93,8 @@ translations = {
     }
 }
 
-user_lang = {}  # Сохраняет выбранный язык пользователя
+user_lang = {}
 
-# Мини-веб-сервер для поддержания порта Render
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -114,8 +108,9 @@ def run_web_server():
     server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
     server.serve_forever()
 
-# Проверка подписки на канал
 async def check_subscription(bot: Bot, user_id: int) -> bool:
+    if user_id == ADMIN_ID:
+        return True
     try:
         member = await bot.get_chat_member(chat_id=REQUIRED_CHANNEL, user_id=user_id)
         if member.status in ["creator", "administrator", "member"]:
@@ -124,21 +119,18 @@ async def check_subscription(bot: Bot, user_id: int) -> bool:
         logging.error(f"Ошибка проверки подписки: {e}")
     return False
 
-# Клавиатура выбора языка
 def get_language_keyboard():
     keyboard = []
     for code, data in translations.items():
         keyboard.append([InlineKeyboardButton(text=data["name"], callback_data=f"setlang_{code}")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
 
-# Команда /start -> Сначала просим выбрать язык
 async def start_handler(message: Message):
     await message.answer(
-        "🌐 Пожалуйста, выберите язык / Лутфан забонро интихоб кунед:",
+        "🌐 Пожалуйста выберите язык / Лутфан забонро интихоб кунед:",
         reply_markup=get_language_keyboard()
     )
 
-# Сохранение языка и проверка подписки
 async def set_language_callback(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
     lang_code = callback.data.split("_")[1]
@@ -148,13 +140,12 @@ async def set_language_callback(callback: CallbackQuery, bot: Bot):
 
     if not await check_subscription(bot, user_id):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=t["sub_btn"], url=f"https://t.me/{REQUIRED_CHANNEL.replace('@', '')}")],
+            [InlineKeyboardButton(text=t["sub_btn"], url=f"https://t.me/raqami_77")],
             [InlineKeyboardButton(text=t["check_btn"], callback_data="check_sub")]
         ])
         await callback.message.edit_text(f"{t['sub_text']} {REQUIRED_CHANNEL}", reply_markup=keyboard)
         return
 
-    # Если подписан, показываем приветствие и админ-кнопку для тебя
     keyboard = [
         [InlineKeyboardButton(text="🌐 Изменить язык", callback_data="change_lang")]
     ]
@@ -163,7 +154,6 @@ async def set_language_callback(callback: CallbackQuery, bot: Bot):
 
     await callback.message.edit_text(WELCOME_TEXT_CUSTOM, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
-# Кнопка "Я подписался"
 async def verify_subscription(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
     lang = user_lang.get(user_id, "ru")
@@ -180,11 +170,9 @@ async def verify_subscription(callback: CallbackQuery, bot: Bot):
     else:
         await callback.answer(t["not_sub"], show_alert=True)
 
-# Смена языка из меню
 async def change_lang_callback(callback: CallbackQuery):
     await callback.message.edit_text("🌐 Выберите язык / Лутфан забонро интихоб кунед:", reply_markup=get_language_keyboard())
 
-# Админ-панель
 async def admin_panel_callback(callback: CallbackQuery):
     if callback.from_user.id != ADMIN_ID:
         return await callback.answer("⛔️ Доступ запрещен", show_alert=True)
@@ -198,12 +186,12 @@ async def admin_panel_callback(callback: CallbackQuery):
 async def admin_back_callback(callback: CallbackQuery, bot: Bot):
     user_id = callback.from_user.id
     keyboard = [
-        [InlineKeyboardButton(text="🌐 Изменить язык", callback_data="change_lang")],
-        [InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")]
+        [InlineKeyboardButton(text="🌐 Изменить язык", callback_data="change_lang")]
     ]
+    if user_id == ADMIN_ID:
+        keyboard.append([InlineKeyboardButton(text="⚙️ Админ-панель", callback_data="admin_panel")])
     await callback.message.edit_text(WELCOME_TEXT_CUSTOM, reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard))
 
-# Обработка ссылок
 async def url_handler(message: Message, bot: Bot):
     user_id = message.from_user.id
     lang = user_lang.get(user_id, "ru")
@@ -228,7 +216,6 @@ async def url_handler(message: Message, bot: Bot):
     else:
         await message.answer("⚠️ Пожалуйста, отправьте корректную ссылку.")
 
-# Функция скачивания медиафайлов через yt-dlp
 async def download_and_send_media(message: Message, url: str, mode: str = "video", lang: str = "ru"):
     t = translations[lang]
     loop = asyncio.get_running_loop()
@@ -273,9 +260,9 @@ async def youtube_callback_handler(callback: CallbackQuery):
     await callback.message.edit_text(t["downloading"])
     
     if action == "dl_vid":
-        await download_and_save_media(callback.message, url, mode="video", lang=lang)
+        await download_and_send_media(callback.message, url, mode="video", lang=lang)
     elif action == "dl_aud":
-        await download_and_save_media(callback.message, url, mode="audio", lang=lang)
+        await download_and_send_media(callback.message, url, mode="audio", lang=lang)
 
 async def main():
     server_thread = threading.Thread(target=run_web_server, daemon=True)
@@ -287,7 +274,6 @@ async def main():
     bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
-    # Регистрация обработчиков
     dp.message.register(start_handler, CommandStart())
     dp.callback_query.register(set_language_callback, F.data.startswith("setlang_"))
     dp.callback_query.register(verify_subscription, F.data == "check_sub")
